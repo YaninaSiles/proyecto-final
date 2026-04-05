@@ -1,0 +1,1502 @@
+{
+  "datasets": [
+    {
+      "name": "a6016e61",
+      "displayName": "Geospatial Classification of Entities and Neighborhoods",
+      "queryLines": [
+        "\r\n",
+        "SELECT \r\n",
+        "    f.latitud,\r\n",
+        "    f.longitud,\r\n",
+        "    c.tipo_entidad,\r\n",
+        "    c.subcategoria,\r\n",
+        "    e.nombre_entidad,\r\n",
+        "    f.es_generador_trafico,\r\n",
+        "    INITCAP(b.barrio_nombre) AS barrio_nombre,\r\n",
+        "    com.nro_comuna,\r\n",
+        "    CASE \r\n",
+        "        WHEN f.es_competencia = 1 THEN 'Competencia (Kioscos)'\r\n",
+        "        WHEN f.es_generador_trafico = 1 THEN 'Atracción (Escuelas/Hosp/Univ)'\r\n",
+        "        ELSE 'Otro' \r\n",
+        "    END AS clasificacion_mapa\r\n",
+        "FROM proyecto_final.gold.fact_entidades f\r\n",
+        "JOIN proyecto_final.gold.dim_categoria c ON f.categoria_id = c.id\r\n",
+        "JOIN proyecto_final.gold.dim_entidad e ON f.entidad_id = e.id\r\n",
+        "JOIN proyecto_final.gold.dim_barrios b ON f.barrio_id = b.id\r\n",
+        "JOIN proyecto_final.gold.dim_comunas com ON f.comuna_id = com.id\r\n",
+        "WHERE f.latitud IS NOT NULL AND f.longitud IS NOT NULL;"
+      ],
+      "catalog": "proyecto_final",
+      "schema": "gold"
+    },
+    {
+      "name": "a97213e5",
+      "displayName": "KPI2",
+      "queryLines": [
+        "\r\n",
+        "SELECT \r\n",
+        "    INITCAP(b.barrio_nombre) AS barrio_nombre,\r\n",
+        "    SUM(f.es_generador_trafico) AS cantidad_atraccion\r\n",
+        "FROM proyecto_final.gold.fact_entidades f\r\n",
+        "JOIN proyecto_final.gold.dim_barrios b ON f.barrio_id = b.id\r\n",
+        "WHERE f.es_generador_trafico = 1\r\n",
+        "GROUP BY b.barrio_nombre\r\n",
+        "ORDER BY cantidad_atraccion DESC\r\n",
+        "LIMIT 10;"
+      ]
+    },
+    {
+      "name": "9c13fda1",
+      "displayName": "KPI3",
+      "queryLines": [
+        "\r\n",
+        "SELECT \r\n",
+        "    INITCAP(b.barrio_nombre) AS barrio_nombre,\r\n",
+        "    SUM(f.es_competencia) AS total_kioscos,\r\n",
+        "    SUM(f.es_generador_trafico) AS total_atraccion,\r\n",
+        "    --calculo de nivel de saturacion \r\n",
+        "    ROUND(SUM(f.es_competencia) / COALESCE(NULLIF(SUM(f.es_generador_trafico), 0), 1), 2) AS nivel_saturacion\r\n",
+        "FROM proyecto_final.gold.fact_entidades f\r\n",
+        "JOIN proyecto_final.gold.dim_barrios b ON f.barrio_id = b.id\r\n",
+        "GROUP BY b.barrio_nombre\r\n",
+        "HAVING SUM(f.es_competencia) > 10\r\n",
+        "ORDER BY nivel_saturacion DESC\r\n",
+        "LIMIT 10;"
+      ]
+    },
+    {
+      "name": "0decf908",
+      "displayName": "KPI1",
+      "queryLines": [
+        "\r\n",
+        "WITH top_barrios_indice AS (\r\n",
+        "    -- indice de oportunidad\r\n",
+        "    SELECT \r\n",
+        "        b.id AS barrio_id,\r\n",
+        "        INITCAP(b.barrio_nombre) AS barrio_nombre,\r\n",
+        "        ROUND(SUM(f.es_generador_trafico) / COALESCE(NULLIF(SUM(f.es_competencia), 0), 1), 2) AS indice_oportunidad\r\n",
+        "    FROM proyecto_final.gold.fact_entidades f\r\n",
+        "    JOIN proyecto_final.gold.dim_barrios b ON f.barrio_id = b.id\r\n",
+        "    GROUP BY b.id, b.barrio_nombre\r\n",
+        "    HAVING SUM(f.es_generador_trafico) > 10\r\n",
+        "    ORDER BY indice_oportunidad DESC\r\n",
+        "    LIMIT 10\r\n",
+        ")\r\n",
+        "-- detalle de entidades SOLO para esos barrios ganadores\r\n",
+        "SELECT \r\n",
+        "    tb.barrio_nombre,\r\n",
+        "    tb.indice_oportunidad,\r\n",
+        "    INITCAP(c.tipo_entidad) AS tipo_entidad,\r\n",
+        "    COUNT(f.entidad_id) AS cantidad_entidades\r\n",
+        "FROM top_barrios_indice tb\r\n",
+        "JOIN proyecto_final.gold.fact_entidades f ON tb.barrio_id = f.barrio_id\r\n",
+        "JOIN proyecto_final.gold.dim_categoria c ON f.categoria_id = c.id\r\n",
+        "WHERE f.es_generador_trafico = 1 -- desglosamos la demanda, no los kioscos\r\n",
+        "GROUP BY \r\n",
+        "    tb.barrio_nombre, \r\n",
+        "    tb.indice_oportunidad, \r\n",
+        "    c.tipo_entidad\r\n",
+        "ORDER BY \r\n",
+        "    tb.indice_oportunidad DESC, \r\n",
+        "    cantidad_entidades DESC;"
+      ]
+    },
+    {
+      "name": "507b3db7",
+      "displayName": "Totales",
+      "queryLines": [
+        "\r\n",
+        "SELECT \r\n",
+        "    -- 1. Total absoluto de puntos analizados\r\n",
+        "    COUNT(entidad_id) AS total_puntos_relevados,\r\n",
+        "    \r\n",
+        "    -- 2. Total de Atracción (La demanda potencial)\r\n",
+        "    SUM(es_generador_trafico) AS total_demanda,\r\n",
+        "    \r\n",
+        "    -- 3. Total de Competencia (Los kioscos)\r\n",
+        "    SUM(es_competencia) AS total_competencia,\r\n",
+        "    \r\n",
+        "    -- 4. Índice Promedio de Oportunidad de toda la ciudad\r\n",
+        "    ROUND(SUM(es_generador_trafico) / COALESCE(NULLIF(SUM(es_competencia), 0), 1), 2) AS indice_promedio_caba\r\n",
+        "\r\n",
+        "FROM proyecto_final.gold.fact_entidades;"
+      ]
+    },
+    {
+      "name": "d1044b23",
+      "displayName": "Calculos por barrio",
+      "queryLines": [
+        "\r\n",
+        "WITH metricas_por_barrio AS (\r\n",
+        "    -- 1. Calculamos los índices agrupados por ID de barrio\r\n",
+        "    SELECT \r\n",
+        "        barrio_id,\r\n",
+        "        ROUND(SUM(es_generador_trafico) / COALESCE(NULLIF(SUM(es_competencia), 0), 1), 2) AS indice_oportunidad\r\n",
+        "    FROM proyecto_final.gold.fact_entidades\r\n",
+        "    GROUP BY barrio_id\r\n",
+        "    ORDER BY indice_oportunidad desc\r\n",
+        "    LIMIT 10\r\n",
+        "), \r\n",
+        "barrios_saturados AS (SELECT \r\n",
+        "    b.id,\r\n",
+        "    INITCAP(b.barrio_nombre) AS barrio_nombre,\r\n",
+        "    SUM(f.es_competencia) AS total_kioscos,\r\n",
+        "    SUM(f.es_generador_trafico) AS total_atraccion,\r\n",
+        "    --calculo de nivel de saturacion \r\n",
+        "    ROUND(SUM(f.es_competencia) / COALESCE(NULLIF(SUM(f.es_generador_trafico), 0), 1), 2) AS nivel_saturacion\r\n",
+        "FROM proyecto_final.gold.fact_entidades f\r\n",
+        "JOIN proyecto_final.gold.dim_barrios b ON f.barrio_id = b.id\r\n",
+        "GROUP BY b.id,b.barrio_nombre\r\n",
+        "HAVING SUM(f.es_competencia) > 10\r\n",
+        "ORDER BY nivel_saturacion DESC\r\n",
+        "LIMIT 10),\r\n",
+        "mejores_barrios as (SELECT \r\n",
+        "    b.id,\r\n",
+        "    INITCAP(b.barrio_nombre) AS barrio_nombre,\r\n",
+        "    SUM(f.es_generador_trafico) AS cantidad_atraccion\r\n",
+        "FROM proyecto_final.gold.fact_entidades f\r\n",
+        "JOIN proyecto_final.gold.dim_barrios b ON f.barrio_id = b.id\r\n",
+        "WHERE f.es_generador_trafico = 1\r\n",
+        "GROUP BY b.id,b.barrio_nombre\r\n",
+        "ORDER BY cantidad_atraccion DESC\r\n",
+        "LIMIT 10)\r\n",
+        "\r\n",
+        "SELECT \r\n",
+        "    f.entidad_id,\r\n",
+        "    INITCAP(b.barrio_nombre) AS barrio_nombre,\r\n",
+        "    INITCAP(c.tipo_entidad) AS tipo_entidad,\r\n",
+        "    \r\n",
+        "\r\n",
+        "    CASE \r\n",
+        "        WHEN f.es_competencia = 1 THEN 'Competencia'\r\n",
+        "        WHEN f.es_generador_trafico = 1 THEN 'Atracción'\r\n",
+        "        ELSE 'Otro'\r\n",
+        "    END AS clasificacion_comercial,\r\n",
+        "    \r\n",
+        "    f.latitud,\r\n",
+        "    f.longitud,\r\n",
+        "    f.es_generador_trafico,\r\n",
+        "    f.es_competencia,\r\n",
+        "    \r\n",
+        "\r\n",
+        "    mb.indice_oportunidad,\r\n",
+        "    mb2.cantidad_atraccion,\r\n",
+        "    bs.nivel_saturacion\r\n",
+        "\r\n",
+        "FROM proyecto_final.gold.fact_entidades f\r\n",
+        "LEFT JOIN proyecto_final.gold.dim_barrios b ON f.barrio_id = b.id\r\n",
+        "LEFT JOIN proyecto_final.gold.dim_categoria c ON f.categoria_id = c.id\r\n",
+        "LEFT JOIN metricas_por_barrio mb ON f.barrio_id = mb.barrio_id\r\n",
+        "LEFT JOIN mejores_barrios mb2 ON f.barrio_id = mb2.id\r\n",
+        "LEFT JOIN barrios_saturados bs ON f.barrio_id = bs.id\r\n",
+        "\r\n",
+        "ORDER BY \r\n",
+        "    mb.indice_oportunidad DESC, \r\n",
+        "    clasificacion_comercial ASC;"
+      ],
+      "catalog": "proyecto_final",
+      "schema": "gold"
+    }
+  ],
+  "pages": [
+    {
+      "name": "7f484339",
+      "displayName": "Barrios",
+      "layout": [
+        {
+          "widget": {
+            "name": "0eac89ec",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "d1044b23",
+                  "fields": [
+                    {
+                      "name": "clasificacion_comercial",
+                      "expression": "`clasificacion_comercial`"
+                    },
+                    {
+                      "name": "latitud",
+                      "expression": "`latitud`"
+                    },
+                    {
+                      "name": "longitud",
+                      "expression": "`longitud`"
+                    },
+                    {
+                      "name": "barrio_nombre",
+                      "expression": "`barrio_nombre`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Mapa "
+              },
+              "widgetType": "symbol-map",
+              "encodings": {
+                "coordinates": {
+                  "latitude": {
+                    "fieldName": "latitud"
+                  },
+                  "longitude": {
+                    "fieldName": "longitud"
+                  }
+                },
+                "color": {
+                  "fieldName": "clasificacion_comercial",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Atracción",
+                        "color": {
+                          "themeColorType": "visualizationColors",
+                          "position": 5
+                        }
+                      },
+                      {
+                        "value": "Competencia",
+                        "color": {
+                          "themeColorType": "visualizationColors",
+                          "position": 10
+                        }
+                      }
+                    ]
+                  }
+                },
+                "extra": [
+                  {
+                    "fieldName": "barrio_nombre"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 4,
+            "height": 12
+          }
+        },
+        {
+          "widget": {
+            "name": "c3d124da",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "d1044b23",
+                  "fields": [
+                    {
+                      "name": "max(cantidad_atraccion)",
+                      "expression": "MAX(`cantidad_atraccion`)"
+                    },
+                    {
+                      "name": "barrio_nombre",
+                      "expression": "`barrio_nombre`"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "IN_RANGE(`es_generador_trafico`, NULL, NULL)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Mayor concetración de puntos de atracción"
+              },
+              "mark": {
+                "colors": [
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 3
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 2
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 3
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 4
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 5
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 6
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 7
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 8
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 9
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 10
+                  }
+                ]
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "max(cantidad_atraccion)",
+                  "displayName": "Cantidad de atracción",
+                  "scale": {
+                    "type": "quantitative",
+                    "reverse": false
+                  }
+                },
+                "y": {
+                  "fieldName": "barrio_nombre",
+                  "displayName": "Barrios",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "custom-order",
+                      "orderedValues": [
+                        "Palermo",
+                        "Flores",
+                        "Balvanera",
+                        "Caballito",
+                        "Villa Lugano",
+                        "Recoleta",
+                        "Barracas",
+                        "Belgrano",
+                        "Almagro",
+                        "Villa Devoto",
+                        "Villa Urquiza",
+                        "Mataderos",
+                        "Villa Soldati",
+                        "Parque Patricios",
+                        "Villa Crespo",
+                        "La Boca",
+                        "San Nicolas",
+                        "Nueva Pompeya",
+                        "Monserrat",
+                        "Saavedra",
+                        "Nuñez",
+                        "Retiro",
+                        "Villa Del Parque",
+                        "Floresta",
+                        "Liniers",
+                        "Parque Avellaneda",
+                        "Parque Chacabuco",
+                        "Monte Castro",
+                        "San Telmo",
+                        "San Cristobal",
+                        "Colegiales",
+                        "Constitucion",
+                        "Villa Gral. Mitre",
+                        "Villa Pueyrredon",
+                        "Boedo",
+                        "Chacarita",
+                        "Paternal",
+                        "Velez Sarsfield",
+                        "Villa Luro",
+                        "Agronomia",
+                        "Villa Santa Rita",
+                        "Villa Ortuzar",
+                        "Coghlan",
+                        "Villa Real",
+                        "Villa Riachuelo",
+                        "Parque Chas",
+                        "Versalles",
+                        "Puerto Madero"
+                      ]
+                    }
+                  }
+                },
+                "label": {
+                  "show": false
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 7,
+            "width": 4,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "62ed5ce9",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "d1044b23",
+                  "fields": [
+                    {
+                      "name": "max(nivel_saturacion)",
+                      "expression": "MAX(`nivel_saturacion`)"
+                    },
+                    {
+                      "name": "barrio_nombre",
+                      "expression": "`barrio_nombre`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Mayor concentración de competencia"
+              },
+              "mark": {
+                "colors": [
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 4
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 2
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 3
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 4
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 5
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 6
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 7
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 8
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 9
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 10
+                  }
+                ]
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "max(nivel_saturacion)",
+                  "displayName": "Nivel de saturación",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "barrio_nombre",
+                  "displayName": "Barrios",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 7,
+            "width": 4,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "2f500061",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "d1044b23",
+                  "fields": [
+                    {
+                      "name": "avg(indice_oportunidad)",
+                      "expression": "AVG(`indice_oportunidad`)"
+                    },
+                    {
+                      "name": "max(indice_oportunidad)",
+                      "expression": "MAX(`indice_oportunidad`)"
+                    },
+                    {
+                      "name": "barrio_nombre",
+                      "expression": "`barrio_nombre`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "showDescription": false,
+                "title": "Mejores barrios"
+              },
+              "mark": {
+                "colors": [
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 3
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 2
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 3
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 4
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 5
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 6
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 7
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 8
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 9
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 10
+                  }
+                ]
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "max(indice_oportunidad)",
+                  "displayName": "Indice de oportunidad",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "barrio_nombre",
+                  "displayName": "Barrios",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "avg(indice_oportunidad)",
+                  "displayName": " ",
+                  "scale": {
+                    "type": "quantitative",
+                    "colorRamp": {
+                      "mode": "scheme",
+                      "scheme": "greens"
+                    }
+                  }
+                },
+                "label": {
+                  "show": false
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "4edb5e44",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "d1044b23",
+                  "fields": [
+                    {
+                      "name": "count(tipo_entidad)",
+                      "expression": "COUNT(`tipo_entidad`)"
+                    },
+                    {
+                      "name": "tipo_entidad",
+                      "expression": "`tipo_entidad`"
+                    }
+                  ],
+                  "filters": [
+                    {
+                      "expression": "IN_RANGE(`es_generador_trafico`, 1, NULL)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Distribución por entidades"
+              },
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "count(tipo_entidad)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Distribución"
+                },
+                "color": {
+                  "fieldName": "tipo_entidad",
+                  "displayName": "Tipo",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "label": {
+                  "show": false
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "568effae",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "507b3db7",
+                  "fields": [
+                    {
+                      "name": "total_puntos_relevados",
+                      "expression": "`total_puntos_relevados`"
+                    },
+                    {
+                      "name": "total_competencia",
+                      "expression": "`total_competencia`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Total Competencia"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "total_competencia"
+                },
+                "target": {
+                  "fieldName": "total_puntos_relevados"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "73bc5701",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "507b3db7",
+                  "fields": [
+                    {
+                      "name": "sum(total_puntos_relevados)",
+                      "expression": "SUM(`total_puntos_relevados`)"
+                    },
+                    {
+                      "name": "sum(total_demanda)",
+                      "expression": "SUM(`total_demanda`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Total puntos de atracción"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(total_demanda)"
+                },
+                "target": {
+                  "fieldName": "sum(total_puntos_relevados)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "c95c2842",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "507b3db7",
+                  "fields": [
+                    {
+                      "name": "sum(indice_promedio_caba)",
+                      "expression": "SUM(`indice_promedio_caba`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Índice de oportunidad"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(indice_promedio_caba)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 0,
+            "width": 2,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "e738795e",
+      "displayName": "Global Filters",
+      "pageType": "PAGE_TYPE_GLOBAL_FILTERS",
+      "layoutVersion": "GRID_V1"
+    },
+    {
+      "name": "aacf0a45",
+      "displayName": "Barrios v1",
+      "layout": [
+        {
+          "widget": {
+            "name": "mapa",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "a6016e61",
+                  "fields": [
+                    {
+                      "name": "clasificacion_mapa",
+                      "expression": "`clasificacion_mapa`"
+                    },
+                    {
+                      "name": "latitud",
+                      "expression": "`latitud`"
+                    },
+                    {
+                      "name": "longitud",
+                      "expression": "`longitud`"
+                    },
+                    {
+                      "name": "barrio_nombre",
+                      "expression": "`barrio_nombre`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Mapa "
+              },
+              "widgetType": "symbol-map",
+              "encodings": {
+                "coordinates": {
+                  "latitude": {
+                    "fieldName": "latitud"
+                  },
+                  "longitude": {
+                    "fieldName": "longitud"
+                  }
+                },
+                "color": {
+                  "fieldName": "clasificacion_mapa",
+                  "displayName": "Clasificación",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "kiosco",
+                        "color": {
+                          "themeColorType": "visualizationColors",
+                          "position": 4
+                        }
+                      },
+                      {
+                        "value": "universidad",
+                        "color": {
+                          "themeColorType": "visualizationColors",
+                          "position": 1
+                        }
+                      },
+                      {
+                        "value": "hospital",
+                        "color": {
+                          "themeColorType": "visualizationColors",
+                          "position": 1
+                        }
+                      },
+                      {
+                        "value": "Atracción (Escuelas/Hosp/Univ)",
+                        "color": {
+                          "themeColorType": "visualizationColors",
+                          "position": 5
+                        }
+                      },
+                      {
+                        "value": "Competencia (Kioscos)",
+                        "color": {
+                          "themeColorType": "visualizationColors",
+                          "position": 6
+                        }
+                      }
+                    ]
+                  }
+                },
+                "extra": [
+                  {
+                    "fieldName": "barrio_nombre"
+                  }
+                ]
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 4,
+            "height": 12
+          }
+        },
+        {
+          "widget": {
+            "name": "mayor-concentracion-lugares-circulacion",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "a97213e5",
+                  "fields": [
+                    {
+                      "name": "sum(cantidad_atraccion)",
+                      "expression": "SUM(`cantidad_atraccion`)"
+                    },
+                    {
+                      "name": "barrio_nombre",
+                      "expression": "`barrio_nombre`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Mayor concetración de puntos de atracción"
+              },
+              "mark": {
+                "colors": [
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 3
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 2
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 3
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 4
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 5
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 6
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 7
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 8
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 9
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 10
+                  }
+                ]
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "sum(cantidad_atraccion)",
+                  "displayName": "Cantidad",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "barrio_nombre",
+                  "displayName": "Barrios",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "label": {
+                  "show": false
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 7,
+            "width": 4,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "mayor-concentracion-de-competencia",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "9c13fda1",
+                  "fields": [
+                    {
+                      "name": "sum(nivel_saturacion)",
+                      "expression": "SUM(`nivel_saturacion`)"
+                    },
+                    {
+                      "name": "barrio_nombre",
+                      "expression": "`barrio_nombre`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Mayor concentración de competencia"
+              },
+              "mark": {
+                "colors": [
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 4
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 2
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 3
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 4
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 5
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 6
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 7
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 8
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 9
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 10
+                  }
+                ]
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "sum(nivel_saturacion)",
+                  "displayName": "Nivel de saturación",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "barrio_nombre",
+                  "displayName": "Barrios",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 7,
+            "width": 4,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "indice-de-oportunidad",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "0decf908",
+                  "fields": [
+                    {
+                      "name": "avg(indice_oportunidad)",
+                      "expression": "AVG(`indice_oportunidad`)"
+                    },
+                    {
+                      "name": "barrio_nombre",
+                      "expression": "`barrio_nombre`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "showDescription": false,
+                "title": "Mejores barrios"
+              },
+              "mark": {
+                "colors": [
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 3
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 2
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 3
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 4
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 5
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 6
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 7
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 8
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 9
+                  },
+                  {
+                    "themeColorType": "visualizationColors",
+                    "position": 10
+                  }
+                ]
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "avg(indice_oportunidad)",
+                  "displayName": "Indice de oportunidad",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "barrio_nombre",
+                  "displayName": "Barrios",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "avg(indice_oportunidad)",
+                  "displayName": " ",
+                  "scale": {
+                    "type": "quantitative",
+                    "colorRamp": {
+                      "mode": "scheme",
+                      "scheme": "greens"
+                    }
+                  }
+                },
+                "label": {
+                  "show": false
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "distribucion-por-entidades",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "0decf908",
+                  "fields": [
+                    {
+                      "name": "cantidad_entidades",
+                      "expression": "`cantidad_entidades`"
+                    },
+                    {
+                      "name": "tipo_entidad",
+                      "expression": "`tipo_entidad`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Distribución por entidades"
+              },
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "cantidad_entidades",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "displayName": "Distribución"
+                },
+                "color": {
+                  "fieldName": "tipo_entidad",
+                  "displayName": "Tipo",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "label": {
+                  "show": false
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "total-competencia",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "507b3db7",
+                  "fields": [
+                    {
+                      "name": "total_puntos_relevados",
+                      "expression": "`total_puntos_relevados`"
+                    },
+                    {
+                      "name": "total_competencia",
+                      "expression": "`total_competencia`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Total Competencia"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "total_competencia"
+                },
+                "target": {
+                  "fieldName": "total_puntos_relevados"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "total-punto-interes",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "507b3db7",
+                  "fields": [
+                    {
+                      "name": "sum(total_puntos_relevados)",
+                      "expression": "SUM(`total_puntos_relevados`)"
+                    },
+                    {
+                      "name": "sum(total_demanda)",
+                      "expression": "SUM(`total_demanda`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Total puntos de atracción"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(total_demanda)"
+                },
+                "target": {
+                  "fieldName": "sum(total_puntos_relevados)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "indice-oportunidad",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "507b3db7",
+                  "fields": [
+                    {
+                      "name": "sum(indice_promedio_caba)",
+                      "expression": "SUM(`indice_promedio_caba`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "frame": {
+                "showTitle": true,
+                "title": "Índice de oportunidad"
+              },
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(indice_promedio_caba)"
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 0,
+            "width": 2,
+            "height": 2
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    }
+  ],
+  "uiSettings": {
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    },
+    "applyModeEnabled": false
+  }
+}
